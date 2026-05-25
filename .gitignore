@@ -1,0 +1,18 @@
+# Local virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Local Database & telemetry logs (Protected by settings.json)
+traces.db
+traces/
+eval/eval_dataset.json
+
+# Local Environment Variables & Secrets
+.env
+.env.local
+
+# IDE configurations & system files
+.DS_Store
+Thumbs.db
+.vscode/

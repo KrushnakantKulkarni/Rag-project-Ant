@@ -1,0 +1,24 @@
+{
+  "project.name": "Failure Forensics Tool",
+  "python.formatting.provider": "black",
+  "python.formatting.blackArgs": ["--line-length", "88"],
+  "python.sortImports.args": ["--profile", "black"],
+  "agentic.safety.enabled": true,
+  "agentic.safety.protectedPaths": [
+    "traces.db",
+    "traces/",
+    "eval/eval_dataset.json",
+    ".env",
+    "docker-compose.yml"
+  ],
+  "agentic.hooks": {
+    "PreToolUse": {
+      "description": "Intercepts terminal commands before execution to block destructive actions on protected resources.",
+      "script": "import sys, re\ncmd = ' '.join(sys.argv[1:])\nprotected = ['traces.db', 'traces/', 'eval/eval_dataset.json', '.env', 'docker-compose.yml']\nfor p in protected:\n    if p in cmd and any(x in cmd for x in ['rm ', 'rm -rf', 'unlink', 'truncate', 'DROP', 'DELETE']):\n        print(f'SAFETY EXCEPTION: Attempted destructive action on protected resource: {p}')\n        sys.exit(1)"
+    },
+    "PostToolUse": {
+      "description": "Enforces Python formatting consistency with black and isort automatically after modifying files.",
+      "script": "import sys, subprocess\nfiles = sys.argv[1:]\nfor f in files:\n    if f.endswith('.py'):\n        subprocess.run(['black', '--quiet', f])\n        subprocess.run(['isort', '--quiet', f])"
+    }
+  }
+}

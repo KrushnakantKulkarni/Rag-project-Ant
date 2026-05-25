@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI: Run Tracing Service",
+      "type": "python",
+      "request": "launch",
+      "runtimeExecutable": "uvicorn",
+      "args": [
+        "api.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "presentation": {
+        "group": "telemetry",
+        "order": 1
+      }
+    },
+    {
+      "name": "Streamlit: Run Trace Explorer UI",
+      "type": "python",
+      "request": "launch",
+      "runtimeExecutable": "streamlit",
+      "args": [
+        "run",
+        "ui/app.py",
+        "--server.port",
+        "8501"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "presentation": {
+        "group": "telemetry",
+        "order": 2
+      }
+    }
+  ]
+}
