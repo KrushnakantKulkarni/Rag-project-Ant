@@ -1,6 +1,6 @@
 # ⚡ Failure Forensics Co-Pilot: Step-by-Step Creation Guide
 
-This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, environment blueprints, and container files required to bootstrap the pipeline observability system.
+This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold and processing pipeline from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, step functions, and execution orchestrators.
 
 ---
 
@@ -81,3 +81,29 @@ We specify all required libraries and declare the Docker environment configurati
 ### 14. `docker-compose.yml`
 * **Path**: `docker-compose.yml`
 * **Description**: The orchestration configuration for running local services. It sets up telemetry containers, maps database volumes safely, and lets you bring up the database, API server, and web UI with a single command.
+
+---
+
+## 🚀 Step 5: Pure Stateless Pipeline Steps (Phase 02)
+
+Here we build the operational core of the processing pipeline. Each step is implemented in a separate, isolated module file with strict Pydantic inputs and outputs, preserving complete statelessness.
+
+### 15. `pipeline/intake.py`
+* **Path**: `pipeline/intake.py`
+* **Description**: Reads incident source text files from disk, strips leading and trailing whitespaces, performs character count validation, and creates the validated `IntakeOutput` model. This is the entry point of the raw document processing stream.
+
+### 16. `pipeline/extraction.py`
+* **Path**: `pipeline/extraction.py`
+* **Description**: Submits the sanitized intake text context to the OpenAI client using a highly structured prompt. It extracts precise facts, entities, timestamps, and error codes directly into Pydantic models.
+
+### 17. `pipeline/classification.py`
+* **Path**: `pipeline/classification.py`
+* **Description**: Performs logical failure categorization (Network, Database, Application, Security, Legal) and assigns severity levels (Critical, Major, Minor). It parses the extracted facts list and enforces a rigorous justification block.
+
+### 18. `pipeline/summarization.py`
+* **Path**: `pipeline/summarization.py`
+* **Description**: Processes the incident categories and facts to compile a clean, readable executive incident summary. It also maps failure states to actionable step-by-step remediation plans.
+
+### 19. `pipeline/runner.py`
+* **Path**: `pipeline/runner.py`
+* **Description**: The centralized orchestrator that connects the four stateless stages in sequence. It chains output results from upstream steps into input schemas of downstream steps, and exposes a singular execution function returning consolidated results.
