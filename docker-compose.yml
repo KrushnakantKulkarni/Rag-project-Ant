@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # observability-api: The FastAPI backend service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forensics-observability-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=traces.db
+      - TRACE_ARCHIVE_DIR=traces/
+    # Runs the uvicorn API server
+    command: python -c "print('FastAPI server placeholder entry point')"
+
+  # observability-ui: The Streamlit visualization dashboard
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forensics-observability-ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=traces.db
+      - TRACE_ARCHIVE_DIR=traces/
+    # Runs the streamlit visualization dashboard
+    command: python -c "print('Streamlit UI placeholder entry point')"
