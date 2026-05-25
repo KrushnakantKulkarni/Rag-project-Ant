@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from openai import OpenAI
 from utils.settings import settings
 from utils.logger import get_logger
+from utils.thresholds import ConfidenceSchema, check_confidence_threshold
 from pipeline.extraction import ExtractedFact
 
 logger = get_logger("pipeline.classification")
@@ -22,12 +23,15 @@ class ClassificationOutput(BaseModel):
     category: str = Field(..., description="Assigned failure category: Legal, Security, Network, Database, Application")
     severity: str = Field(..., description="Assigned incident severity: Critical, Major, Minor")
     justification: str = Field(..., description="Clear textual logic detailing why this category/severity was assigned")
+    confidence_score: int = Field(..., description="Co-generated confidence score (1-5)")
+    confidence_justification: str = Field(..., description="Textual justification for the assigned confidence score")
 
 # Internal Pydantic schema enforcing literals for structured outputs
 class ClassificationResponseSchema(BaseModel):
     category: Literal["Legal", "Security", "Network", "Database", "Application"]
     severity: Literal["Critical", "Major", "Minor"]
     justification: str
+    confidence: ConfidenceSchema
 
 from tracing.instrumentation import instrument, record_llm_telemetry
 
@@ -35,7 +39,7 @@ from tracing.instrumentation import instrument, record_llm_telemetry
 def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     """
     Classification step execution: Performs incident classification on categories 
-    and severities based on extracted facts.
+    and severities based on extracted facts, co-generating a confidence score.
     """
     logger.info(f"Running LLM Classification for: {input_data.document_name}")
     
@@ -54,6 +58,9 @@ def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     2. A severity level (Critical, Major, Minor)
     3. A clear, technical justification of your choices.
     
+    Additionally, rate your confidence in this classification on an integer scale from 1 (very low confidence/noisy input) 
+    to 5 (absolute certainty/clean input) and provide a short technical justification.
+    
     <extracted_facts>
     {facts_str}
     </extracted_facts>
@@ -63,7 +70,7 @@ def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     completion = client.beta.chat.completions.parse(
         model=settings.LLM_MODEL,
         messages=[
-            {"role": "system", "content": "You are a professional system operations reliability engineer."},
+            {"role": "system", "content": "You are a professional system operations reliability engineer. Co-generate your classification results and confidence self-score together in a single API completion request."},
             {"role": "user", "content": prompt}
         ],
         response_format=ClassificationResponseSchema
@@ -77,15 +84,21 @@ def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     record_llm_telemetry(
         prompt=prompt,
         response=completion.choices[0].message.content or "",
-        tokens=getattr(completion.usage, "total_tokens", 0)
+        tokens=getattr(completion.usage, "total_tokens", 0),
+        confidence=result.confidence.score
     )
+    
+    # Perform confidence warnings threshold checking
+    check_confidence_threshold("Classification", result.confidence.score, result.confidence.justification)
         
     output = ClassificationOutput(
         document_name=input_data.document_name,
         category=result.category,
         severity=result.severity,
-        justification=result.justification
+        justification=result.justification,
+        confidence_score=result.confidence.score,
+        confidence_justification=result.confidence.justification
     )
     
-    logger.info(f"Classification completed for {input_data.document_name} (Category: {output.category}, Severity: {output.severity})")
+    logger.info(f"Classification completed for {input_data.document_name} (Category: {output.category}, Severity: {output.severity}, Confidence: {output.confidence_score}/5)")
     return output

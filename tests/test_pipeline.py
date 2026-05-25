@@ -65,7 +65,7 @@ def test_extraction_step_success(mock_openai_class):
     mock_completion = MagicMock()
     mock_client.beta.chat.completions.parse.return_value = mock_completion
     
-    # Formulate mock parsed output model
+    # Formulate mock parsed output model containing confidence metrics
     mock_parsed_facts = extraction.ExtractionResponseSchema(
         facts=[
             extraction.ExtractedFact(
@@ -75,11 +75,14 @@ def test_extraction_step_success(mock_openai_class):
                 description="Unauthorized access warning received"
             )
         ],
-        raw_log_context="2026-05-23T12:00:00Z AuthService ERR-401"
+        raw_log_context="2026-05-23T12:00:00Z AuthService ERR-401",
+        confidence=extraction.ConfidenceSchema(score=4, justification="clean extraction log")
     )
     
+    # Ensure raw prompt message content has a mock string to avoid validation crashes
     mock_completion.choices = [MagicMock()]
     mock_completion.choices[0].message.parsed = mock_parsed_facts
+    mock_completion.choices[0].message.content = "mock raw completion response facts context"
     
     input_data = extraction.ExtractionInput(
         document_name="auth_err.log",
@@ -93,6 +96,9 @@ def test_extraction_step_success(mock_openai_class):
     assert output.facts[0].entity == "AuthService"
     assert output.facts[0].error_code == "ERR-401"
     assert output.raw_log_context == "2026-05-23T12:00:00Z AuthService ERR-401"
+    assert output.confidence_score == 4
+    assert output.confidence_justification == "clean extraction log"
+
 
 
 # ==============================================================================
@@ -112,11 +118,13 @@ def test_classification_step_success(mock_openai_class):
     mock_parsed_classification = classification.ClassificationResponseSchema(
         category="Security",
         severity="Critical",
-        justification="AuthService ERR-401 errors represent active access control policy rejections."
+        justification="AuthService ERR-401 errors represent active access control policy rejections.",
+        confidence=classification.ConfidenceSchema(score=5, justification="confident classification")
     )
     
     mock_completion.choices = [MagicMock()]
     mock_completion.choices[0].message.parsed = mock_parsed_classification
+    mock_completion.choices[0].message.content = "mock classification raw response context"
     
     input_data = classification.ClassificationInput(
         document_name="auth_err.log",
@@ -135,6 +143,9 @@ def test_classification_step_success(mock_openai_class):
     assert output.category == "Security"
     assert output.severity == "Critical"
     assert "access control" in output.justification
+    assert output.confidence_score == 5
+    assert output.confidence_justification == "confident classification"
+
 
 
 # ==============================================================================
@@ -153,11 +164,13 @@ def test_summarization_step_success(mock_openai_class):
     
     mock_parsed_summary = summarization.SummarizationResponseSchema(
         executive_summary="Active authorization token failure at AuthService.",
-        remediation_steps="1. Review firewall blocks.\n2. Invalidate expired session tokens."
+        remediation_steps="1. Review firewall blocks.\n2. Invalidate expired session tokens.",
+        confidence=summarization.ConfidenceSchema(score=4, justification="summarization confident")
     )
     
     mock_completion.choices = [MagicMock()]
     mock_completion.choices[0].message.parsed = mock_parsed_summary
+    mock_completion.choices[0].message.content = "mock summarization raw response content"
     
     input_data = summarization.SummarizationInput(
         document_name="auth_err.log",
@@ -177,6 +190,9 @@ def test_summarization_step_success(mock_openai_class):
     
     assert "AuthService" in output.executive_summary
     assert "Invalidate expired" in output.remediation_steps
+    assert output.confidence_score == 4
+    assert output.confidence_justification == "summarization confident"
+
 
 
 # ==============================================================================
@@ -205,8 +221,10 @@ def test_runner_e2e_mock_success(mock_sum_openai, mock_cls_openai, mock_ext_open
                 description="Failed to ping API server"
             )
         ],
-        raw_log_context="NET-TIMEOUT on Gateway"
+        raw_log_context="NET-TIMEOUT on Gateway",
+        confidence=extraction.ConfidenceSchema(score=4, justification="facts parsed")
     )
+    mock_ext_comp.choices[0].message.content = "mock raw facts extraction completion text"
     
     # 2. Mock Classification completion outputs
     mock_cls_client = MagicMock()
@@ -217,8 +235,10 @@ def test_runner_e2e_mock_success(mock_sum_openai, mock_cls_openai, mock_ext_open
     mock_cls_comp.choices[0].message.parsed = classification.ClassificationResponseSchema(
         category="Network",
         severity="Major",
-        justification="Network timeouts represent structural service issues."
+        justification="Network timeouts represent structural service issues.",
+        confidence=classification.ConfidenceSchema(score=5, justification="taxons matched")
     )
+    mock_cls_comp.choices[0].message.content = "mock raw classification completion text"
     
     # 3. Mock Summarization completion outputs
     mock_sum_client = MagicMock()
@@ -228,8 +248,10 @@ def test_runner_e2e_mock_success(mock_sum_openai, mock_cls_openai, mock_ext_open
     mock_sum_comp.choices = [MagicMock()]
     mock_sum_comp.choices[0].message.parsed = summarization.SummarizationResponseSchema(
         executive_summary="Network service loss.",
-        remediation_steps="Restart network switch."
+        remediation_steps="Restart network switch.",
+        confidence=summarization.ConfidenceSchema(score=4, justification="remediations compiled")
     )
+    mock_sum_comp.choices[0].message.content = "mock raw summarization completion text"
     
     # Run Orchestrator
     result = runner.execute_pipeline(
@@ -245,6 +267,12 @@ def test_runner_e2e_mock_success(mock_sum_openai, mock_cls_openai, mock_ext_open
     assert result.extraction.facts[0].entity == "NetworkGateway"
     assert result.classification.category == "Network"
     assert result.summarization.executive_summary == "Network service loss."
+    
+    # Assert confidence co-generation metrics are integrated
+    assert result.extraction.confidence_score == 4
+    assert result.classification.confidence_score == 5
+    assert result.summarization.confidence_score == 4
+
 
 
 # ==============================================================================
@@ -355,4 +383,62 @@ def test_atomic_storage_transaction_success():
         assert span_row[0] == "Intake"
         assert span_row[1] == "SUCCESS"
         assert span_row[2] == 12.5
+
+
+# ==============================================================================
+# Phase 04: Confidence Scoring, Parsing Resilience, and Threshold Unit Tests
+# ==============================================================================
+def test_confidence_validation_resilience():
+    """
+    Verifies that invalid confidence formats (e.g. strings like "High", "90%", 
+    or integers out of bounds) are gracefully auto-translated to standard default (3).
+    """
+    from utils.thresholds import ConfidenceSchema
+    
+    # 1. Test clean valid integers
+    c1 = ConfidenceSchema(score=4, justification="clean")
+    assert c1.score == 4
+    
+    # 2. Test string numerical percentage parsing
+    c2 = ConfidenceSchema(score="90%", justification="noisy percent")
+    assert c2.score == 3  # "90" parsed as 90 which is out of bounds, thus falling back to 3
+    
+    c3 = ConfidenceSchema(score="4/5", justification="slash format")
+    assert c3.score == 4  # "4" extracted and validated successfully
+    
+    # 3. Test textual inputs falling back to default 3
+    c4 = ConfidenceSchema(score="High", justification="qualitative description")
+    assert c4.score == 3
+    
+    # 4. Test integers out of bounds (score <= 0 or score > 5) falling back to default 3
+    c5 = ConfidenceSchema(score=6, justification="too high")
+    assert c5.score == 3
+    
+    c6 = ConfidenceSchema(score=0, justification="too low")
+    assert c6.score == 3
+
+
+def test_confidence_threshold_alerts(caplog):
+    """
+    Verifies that utils/thresholds.py correctly identifies low confidence scores 
+    (score <= 2) and logs standard warning flags.
+    """
+    import logging
+    from utils.thresholds import check_confidence_threshold
+    
+    # Run with log capturing enabled at the WARNING level
+    with caplog.at_level(logging.WARNING):
+        # 1. Test acceptable score (no warning triggered)
+        triggered_1 = check_confidence_threshold("TestStep", 4, "acceptable facts")
+        assert triggered_1 is False
+        assert len(caplog.records) == 0
+        
+        # 2. Test low score (warning alert triggered)
+        triggered_2 = check_confidence_threshold("TestStep", 2, "highly ambiguous logs")
+        assert triggered_2 is True
+        assert len(caplog.records) == 1
+        assert "LOW CONFIDENCE ALERT" in caplog.text
+        assert "TestStep" in caplog.text
+        assert "highly ambiguous logs" in caplog.text
+
 

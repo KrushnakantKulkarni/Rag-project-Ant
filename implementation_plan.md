@@ -1,6 +1,6 @@
-# 📋 Phase Spec: 03 · Tracing Layer Implementation Plan
+# 📋 Phase Spec: 04 · Confidence Scoring Implementation Plan
 
-This implementation plan establishes the observability decorators, telemetry span models, and transaction-managed SQLite/disk storage for Phase 03.
+This implementation plan establishes the co-generated self-confidence scoring metrics, resilient Pydantic schema fallbacks, and warning alert thresholds for Phase 04.
 
 ## 📂 Proposed File Scaffolding & Modifications
 
@@ -8,23 +8,22 @@ Here is the exact list of files that will be created and modified for this phase
 
 | File Path | Action | Purpose |
 | :--- | :--- | :--- |
-| **`tracing/span.py`** | **[NEW]** | Declares the Pydantic model for individual execution spans, storing latency, tokens, error logs, and confidence. |
-| **`tracing/trace.py`** | **[NEW]** | Declares the Pydantic model for parent execution traces containing an aggregate of child Spans and metadata. |
-| **`tracing/instrumentation.py`**| **[NEW]** | Implements the `@instrument` decorator and context managers using high-resolution monotonic timers. |
-| **`tracing/storage.py`** | **[NEW]** | Implements transactional SQLite indexing and structured JSON serialization of trace telemetry files on disk. |
-| **`pipeline/runner.py`** | **[MODIFY]** | Updates the E2E coordinator to run steps inside a tracing session and execute atomic telemetry storage. |
+| **`utils/thresholds.py`** | **[NEW]** | Implements the core threshold criteria checking, flagging warning logs when confidence score ≤ 2. |
+| **`pipeline/extraction.py`** | **[MODIFY]** | Updates extraction prompt, response schema, and output model to co-generate self-confidence scores. |
+| **`pipeline/classification.py`** | **[MODIFY]** | Updates classification prompt, response schema, and output model to co-generate self-confidence scores. |
+| **`pipeline/summarization.py`** | **[MODIFY]** | Updates summarization prompt, response schema, and output model to co-generate self-confidence scores. |
 
 ## ⚙️ Rules for Implementation
-- **Accurate Latencies**: Capture execution time using python's nanosecond monotonic clocks (`time.perf_counter_ns()`).
-- **Exception Capture**: The `@instrument` decorator must capture all exceptions, log the stack trace to the Span's `error` field, set status to `FAILED`, and re-raise.
-- **Atomic DB Transactions**: Telemetry indexing in SQLite must be fully transaction-guaranteed (single commit block for trace + spans).
-- **Concurrency Safety**: Use safe sqlite3 connections and directory creation handling.
+- **Co-generation Principle**: Absolutely no separate scoring LLM calls. Prompts must require the model to return both the primary results and the confidence score together in one API request.
+- **Strict Integer Type**: Confidence scores must be processed and saved as strict integers strictly in the range of 1 to 5.
+- **Justification Logging**: Prompts must instruct the LLM to output a textual sentence explaining the assigned score, cataloged inside telemetry.
+- **Pydantic Parsing Resilience**: Enforce fallback validation via `@field_validator` converting invalid text (e.g. `"High"`, `"90%"`) to standard defaults (`3`).
 
 ## ✅ Definition of Done (DoD)
-- **Telemetry Schema Validation**: Spans and Traces serialize and validate cleanly using strict Pydantic schemas.
-- **Decorator Timing Validation**: High-resolution nanosecond timers record actual processing latencies within a ±5ms margin.
-- **Atomic Storage Validation**: Failed E2E runs successfully produce failed trace JSONs and index "FAILED" states in SQLite without crashing.
-- **Offline Telemetry Tests**: Automated unit tests execute successfully using mock timers and sleep assertions.
+- **Co-generation Verification**: Spans confirm confidence and justification are fetched inside the primary step execution.
+- **Score Range Enforcement**: Verify that confidence integers are strictly formatted and assert that they fall in the `1–5` range.
+- **Threshold Alert Validation**: Ensure a warning is logged when step self-scores are low (score ≤ 2).
+- **Pydantic Parsing Resilience**: Test validators with wrong string formats and verify they map automatically to the standard default value (`3`).
 
 ---
 

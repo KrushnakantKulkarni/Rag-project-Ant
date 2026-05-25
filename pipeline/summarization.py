@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from openai import OpenAI
 from utils.settings import settings
 from utils.logger import get_logger
+from utils.thresholds import ConfidenceSchema, check_confidence_threshold
 from pipeline.extraction import ExtractedFact
 
 logger = get_logger("pipeline.summarization")
@@ -22,11 +23,14 @@ class SummarizationOutput(BaseModel):
     document_name: str = Field(..., description="The name of the analyzed document")
     executive_summary: str = Field(..., description="A concise, high-level summary of the incident for leadership")
     remediation_steps: str = Field(..., description="Actionable step-by-step remediation instructions to resolve the failure")
+    confidence_score: int = Field(..., description="Co-generated confidence score (1-5)")
+    confidence_justification: str = Field(..., description="Textual justification for the assigned confidence score")
 
 # Internal Pydantic schema for structured response formats
 class SummarizationResponseSchema(BaseModel):
     executive_summary: str
     remediation_steps: str
+    confidence: ConfidenceSchema
 
 from tracing.instrumentation import instrument, record_llm_telemetry
 
@@ -34,7 +38,7 @@ from tracing.instrumentation import instrument, record_llm_telemetry
 def run_step(input_data: SummarizationInput) -> SummarizationOutput:
     """
     Summarization step execution: Synthesizes categories and facts into executive
-    reports and remediation checklists.
+    reports and remediation checklists, co-generating a confidence score.
     """
     logger.info(f"Running LLM Summarization for: {input_data.document_name}")
     
@@ -57,13 +61,16 @@ def run_step(input_data: SummarizationInput) -> SummarizationOutput:
     
     Extracted Facts:
     {facts_str}
+    
+    Additionally, rate your confidence in this summarization on an integer scale from 1 (very low confidence/noisy input) 
+    to 5 (absolute certainty/clean input) and provide a short technical justification.
     """
     
     # Utilizing structured outputs to extract clean markdown responses
     completion = client.beta.chat.completions.parse(
         model=settings.LLM_MODEL,
         messages=[
-            {"role": "system", "content": "You are a professional IT service reliability manager compiling executive incident reports."},
+            {"role": "system", "content": "You are a professional IT service reliability manager compiling executive incident reports. Co-generate your summary and confidence self-score together in a single API completion request."},
             {"role": "user", "content": prompt}
         ],
         response_format=SummarizationResponseSchema
@@ -77,14 +84,20 @@ def run_step(input_data: SummarizationInput) -> SummarizationOutput:
     record_llm_telemetry(
         prompt=prompt,
         response=completion.choices[0].message.content or "",
-        tokens=getattr(completion.usage, "total_tokens", 0)
+        tokens=getattr(completion.usage, "total_tokens", 0),
+        confidence=result.confidence.score
     )
+    
+    # Perform confidence warnings threshold checking
+    check_confidence_threshold("Summarization", result.confidence.score, result.confidence.justification)
         
     output = SummarizationOutput(
         document_name=input_data.document_name,
         executive_summary=result.executive_summary,
-        remediation_steps=result.remediation_steps
+        remediation_steps=result.remediation_steps,
+        confidence_score=result.confidence.score,
+        confidence_justification=result.confidence.justification
     )
     
-    logger.info(f"Summarization completed for {input_data.document_name}")
+    logger.info(f"Summarization completed for {input_data.document_name} (Confidence: {output.confidence_score}/5)")
     return output

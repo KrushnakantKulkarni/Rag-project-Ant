@@ -1,6 +1,6 @@
 # ⚡ Failure Forensics Co-Pilot: Step-by-Step Creation Guide
 
-This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold, processing pipeline, and tracing layer from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, step functions, execution orchestrators, decorators, and telemetry logging modules.
+This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold, processing pipeline, tracing layer, and confidence scoring indicators from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, step functions, execution orchestrators, decorators, telemetry logging modules, and self-evaluation schemas.
 
 ---
 
@@ -129,3 +129,17 @@ We implement the tracing ecosystem, providing high-resolution execution profilin
 ### 23. `tracing/storage.py`
 * **Path**: `tracing/storage.py`
 * **Description**: Establishes local telemetry indexing. It serializes traces as individual JSON logs inside the `traces/` folder, and utilizes atomicity-guaranteed SQLite transactions to commit data safely to `traces.db`.
+
+---
+
+## 🎯 Step 7: Step-Level Confidence Self-Scoring & Thresholds (Phase 04)
+
+We instrument steps to rate their output quality, validate scores resiliently, and raise alerts when confidence scores fall below acceptable limits.
+
+### 24. `utils/thresholds.py`
+* **Path**: `utils/thresholds.py`
+* **Description**: Declares standard confidence threshold triggers and evaluates recorded metrics. Flags warning alerts inside logs whenever a pipeline step records low confidence (score ≤ 2).
+
+### 25. Updates to LLM step schemas (`extraction.py`, `classification.py`, `summarization.py`)
+* **Path**: `pipeline/*.py`
+* **Description**: Updates prompts and structures response schemas to co-generate a resilient `ConfidenceSchema` payload during the primary OpenAI API transactions, enforcing integer-based self-justified scoring constraints.
