@@ -1,6 +1,6 @@
 # ⚡ Failure Forensics Co-Pilot: Step-by-Step Creation Guide
 
-This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold and processing pipeline from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, step functions, and execution orchestrators.
+This guide walks you through the step-by-step creation of the **Failure Forensics Tool** project scaffold, processing pipeline, and tracing layer from top to bottom. It establishes the package directories, configuration models, SQLite index schemas, step functions, execution orchestrators, decorators, and telemetry logging modules.
 
 ---
 
@@ -107,3 +107,25 @@ Here we build the operational core of the processing pipeline. Each step is impl
 ### 19. `pipeline/runner.py`
 * **Path**: `pipeline/runner.py`
 * **Description**: The centralized orchestrator that connects the four stateless stages in sequence. It chains output results from upstream steps into input schemas of downstream steps, and exposes a singular execution function returning consolidated results.
+
+---
+
+## 📊 Step 6: Observability Telemetry & Tracing Layer (Phase 03)
+
+We implement the tracing ecosystem, providing high-resolution execution profiling, automatic exceptions catching decorators, and transactional relational database indexing.
+
+### 20. `tracing/span.py`
+* **Path**: `tracing/span.py`
+* **Description**: Establishes the `Span` Pydantic model. This schema tracks granular data including errors, latencies, tokens, and raw prompt-response strings for each isolated execution stage.
+
+### 21. `tracing/trace.py`
+* **Path**: `tracing/trace.py`
+* **Description**: Establishes the `Trace` Pydantic model. It acts as an execution context holder that aggregates the list of Spans, measures E2E latencies, and tallies total token costs.
+
+### 22. `tracing/instrumentation.py`
+* **Path**: `tracing/instrumentation.py`
+* **Description**: Implements the context-managed timers and `@instrument` decorator. It captures processing speeds in microseconds, binds metadata, intercepts failures, and populates the global thread-safe span contexts.
+
+### 23. `tracing/storage.py`
+* **Path**: `tracing/storage.py`
+* **Description**: Establishes local telemetry indexing. It serializes traces as individual JSON logs inside the `traces/` folder, and utilizes atomicity-guaranteed SQLite transactions to commit data safely to `traces.db`.

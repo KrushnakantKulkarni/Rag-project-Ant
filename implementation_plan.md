@@ -1,30 +1,30 @@
-# 📋 Phase Spec: 02 · Four-Step Pipeline Implementation Plan
+# 📋 Phase Spec: 03 · Tracing Layer Implementation Plan
 
-This implementation plan establishes the stateless step modules and execution runner for Phase 02.
+This implementation plan establishes the observability decorators, telemetry span models, and transaction-managed SQLite/disk storage for Phase 03.
 
-## 📂 Proposed File Scaffolding
+## 📂 Proposed File Scaffolding & Modifications
 
-Here is the exact list of files to be created for the analysis pipeline, their relative paths, and a one-line description of their purpose:
+Here is the exact list of files that will be created and modified for this phase, their relative paths, and a one-line description of their purpose:
 
-| File Path | Purpose |
-| :--- | :--- |
-| **`pipeline/intake.py`** | Reads raw incident files, extracts name, and performs character count validation. |
-| **`pipeline/extraction.py`** | Processes intake text using OpenAI to extract structured entities, timestamps, and error codes. |
-| **`pipeline/classification.py`** | Groups incident logs into failure category and severity taxonomies with justifications. |
-| **`pipeline/summarization.py`** | Synthesizes details into executive summaries and lists actionable remediation steps. |
-| **`pipeline/runner.py`** | Integrates and orchestrates the four sequential steps into a stateless end-to-end execution. |
+| File Path | Action | Purpose |
+| :--- | :--- | :--- |
+| **`tracing/span.py`** | **[NEW]** | Declares the Pydantic model for individual execution spans, storing latency, tokens, error logs, and confidence. |
+| **`tracing/trace.py`** | **[NEW]** | Declares the Pydantic model for parent execution traces containing an aggregate of child Spans and metadata. |
+| **`tracing/instrumentation.py`**| **[NEW]** | Implements the `@instrument` decorator and context managers using high-resolution monotonic timers. |
+| **`tracing/storage.py`** | **[NEW]** | Implements transactional SQLite indexing and structured JSON serialization of trace telemetry files on disk. |
+| **`pipeline/runner.py`** | **[MODIFY]** | Updates the E2E coordinator to run steps inside a tracing session and execute atomic telemetry storage. |
 
 ## ⚙️ Rules for Implementation
-- **Decoupled State**: All steps must be pure, stateless functions receiving typed inputs and returning typed outputs.
-- **Pydantic Validation**: Instantiate and validate input and output models at the boundary of every step.
-- **Structured Prompts**: Prompts must use clear contextual division (XML tags or specific parameters) to isolate system instructions and inputs.
-- **No Swallowing**: Do not declare functions with `**kwargs` or generic `dict` arguments.
+- **Accurate Latencies**: Capture execution time using python's nanosecond monotonic clocks (`time.perf_counter_ns()`).
+- **Exception Capture**: The `@instrument` decorator must capture all exceptions, log the stack trace to the Span's `error` field, set status to `FAILED`, and re-raise.
+- **Atomic DB Transactions**: Telemetry indexing in SQLite must be fully transaction-guaranteed (single commit block for trace + spans).
+- **Concurrency Safety**: Use safe sqlite3 connections and directory creation handling.
 
 ## ✅ Definition of Done (DoD)
-- **Interface Schema Isolation**: Standalone step modules exist under `pipeline/` with explicit input/output models.
-- **Contract Chaining**: Outputs of upstream stages map fully to input models of downstream stages.
-- **Offline Mock Tests**: Unit tests run cleanly and verify each step using mocked OpenAI API client calls.
-- **E2E execution block**: `pipeline/runner.py` executes end-to-end and aggregates mock telemetry and outputs.
+- **Telemetry Schema Validation**: Spans and Traces serialize and validate cleanly using strict Pydantic schemas.
+- **Decorator Timing Validation**: High-resolution nanosecond timers record actual processing latencies within a ±5ms margin.
+- **Atomic Storage Validation**: Failed E2E runs successfully produce failed trace JSONs and index "FAILED" states in SQLite without crashing.
+- **Offline Telemetry Tests**: Automated unit tests execute successfully using mock timers and sleep assertions.
 
 ---
 

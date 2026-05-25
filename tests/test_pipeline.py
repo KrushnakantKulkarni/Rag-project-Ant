@@ -1,6 +1,33 @@
+import os
+import time
+import json
 import pytest
 from unittest.mock import MagicMock, patch
+from utils.settings import settings
 from pipeline import intake, extraction, classification, summarization, runner
+from tracing.instrumentation import instrument, trace_session, get_active_spans
+from tracing.trace import Trace
+from tracing.span import Span
+from tracing.storage import save_trace
+
+@pytest.fixture(autouse=True)
+def setup_temp_db(tmp_path, monkeypatch):
+    """
+    Autouse fixture that sandboxes the settings DATABASE_PATH and TRACE_ARCHIVE_DIR
+    to temporary testing folders and initializes the tables using schema.sql.
+    """
+    db_path = str(tmp_path / "test_traces.db")
+    archive_dir = str(tmp_path / "test_traces_dir")
+    
+    monkeypatch.setattr(settings, "DATABASE_PATH", db_path)
+    monkeypatch.setattr(settings, "TRACE_ARCHIVE_DIR", archive_dir)
+    
+    # Initialize schema
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        with open("schema.sql") as f:
+            conn.executescript(f.read())
+    yield
 
 # ==============================================================================
 # Step 1: Intake Step Unit Tests
@@ -218,3 +245,114 @@ def test_runner_e2e_mock_success(mock_sum_openai, mock_cls_openai, mock_ext_open
     assert result.extraction.facts[0].entity == "NetworkGateway"
     assert result.classification.category == "Network"
     assert result.summarization.executive_summary == "Network service loss."
+
+
+# ==============================================================================
+# Phase 03: Telemetry, Decorator, and Storage Layer Unit Tests
+# ==============================================================================
+def test_decorator_timing_and_exception_capture():
+    """
+    Verifies that the @instrument decorator profiles execution speeds, 
+    captures input/output schemas, and logs exceptions with full tracebacks.
+    """
+    @instrument("TimingStep")
+    def dummy_step(input_data: intake.IntakeInput):
+        time.sleep(0.05)  # Simulate 50ms processing latency
+        return intake.IntakeOutput(
+            document_name="dummy.log",
+            sanitized_text="processed_content",
+            char_count=17
+        )
+
+    @instrument("FailingStep")
+    def dummy_fail_step(input_data: intake.IntakeInput):
+        raise ValueError("Simulated step failure")
+
+    # Test timing accuracy
+    with trace_session("tr-test-timing") as spans:
+        inp = intake.IntakeInput(filepath="dummy.log", raw_content="raw")
+        out = dummy_step(inp)
+        assert out.char_count == 17
+        
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.step_name == "TimingStep"
+        assert span.status == "SUCCESS"
+        # Monotonic timers should reflect sleep duration (typically 45-80ms under CI/CD load)
+        assert 45.0 <= span.latency_ms <= 120.0
+        assert "dummy.log" in span.serialized_input
+        assert "processed_content" in span.serialized_output
+
+    # Test exception capture and status marking
+    with trace_session("tr-test-fail") as spans:
+        inp = intake.IntakeInput(filepath="dummy.log", raw_content="raw")
+        with pytest.raises(ValueError, match="Simulated step failure"):
+            dummy_fail_step(inp)
+            
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.step_name == "FailingStep"
+        assert span.status == "FAILED"
+        assert span.serialized_output is None
+        assert "traceback" in span.error.lower() or "line" in span.error.lower()
+        assert "Simulated step failure" in span.error
+
+
+def test_atomic_storage_transaction_success():
+    """
+    Verifies that save_trace creates JSON logs on disk and commits parent-child
+    telemetry records to SQLite in a single transaction block.
+    """
+    span = Span(
+        span_id="sp-test-1",
+        trace_id="tr-test-atomic",
+        step_name="Intake",
+        status="SUCCESS",
+        serialized_input='{"filepath": "test.log", "raw_content": "val"}',
+        serialized_output='{"document_name": "test.log", "sanitized_text": "val", "char_count": 3}',
+        latency_ms=12.5
+    )
+    
+    trace = Trace(
+        trace_id="tr-test-atomic",
+        document_name="test.log",
+        status="SUCCESS",
+        spans=[span],
+        overall_latency_ms=12.5,
+        overall_token_count=0
+    )
+    
+    # Execute atomic save
+    save_trace(trace)
+    
+    # 1. Assert JSON trace file exists in sandboxed folder
+    json_path = os.path.join(settings.TRACE_ARCHIVE_DIR, f"{trace.trace_id}.json")
+    assert os.path.exists(json_path)
+    
+    with open(json_path, "r", encoding="utf-8") as f:
+        saved_data = json.load(f)
+        assert saved_data["trace_id"] == "tr-test-atomic"
+        assert len(saved_data["spans"]) == 1
+        assert saved_data["spans"][0]["span_id"] == "sp-test-1"
+        
+    # 2. Assert SQLite entries exist in transactionally committed tables
+    import sqlite3
+    with sqlite3.connect(settings.DATABASE_PATH) as conn:
+        cur = conn.cursor()
+        
+        # Assert trace parent row
+        cur.execute("SELECT document_name, status, overall_latency_ms FROM traces WHERE trace_id = ?", ("tr-test-atomic",))
+        trace_row = cur.fetchone()
+        assert trace_row is not None
+        assert trace_row[0] == "test.log"
+        assert trace_row[1] == "SUCCESS"
+        assert trace_row[2] == 12.5
+        
+        # Assert span child row
+        cur.execute("SELECT step_name, status, latency_ms FROM spans WHERE span_id = ?", ("sp-test-1",))
+        span_row = cur.fetchone()
+        assert span_row is not None
+        assert span_row[0] == "Intake"
+        assert span_row[1] == "SUCCESS"
+        assert span_row[2] == 12.5
+

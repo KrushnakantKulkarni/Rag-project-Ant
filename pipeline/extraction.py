@@ -34,6 +34,9 @@ class ExtractionResponseSchema(BaseModel):
     facts: list[ExtractedFact]
     raw_log_context: str
 
+from tracing.instrumentation import instrument, record_llm_telemetry
+
+@instrument("Extraction")
 def run_step(input_data: ExtractionInput) -> ExtractionOutput:
     """
     Extraction step execution: Submits sanitized text to LLM and extracts
@@ -69,6 +72,13 @@ def run_step(input_data: ExtractionInput) -> ExtractionOutput:
     result = completion.choices[0].message.parsed
     if not result:
         raise ValueError("Failed to extract structured facts from OpenAI response.")
+    
+    # Record LLM telemetry metrics into active context
+    record_llm_telemetry(
+        prompt=prompt,
+        response=completion.choices[0].message.content or "",
+        tokens=getattr(completion.usage, "total_tokens", 0)
+    )
         
     output = ExtractionOutput(
         document_name=input_data.document_name,

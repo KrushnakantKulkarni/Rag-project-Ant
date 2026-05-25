@@ -28,6 +28,9 @@ class SummarizationResponseSchema(BaseModel):
     executive_summary: str
     remediation_steps: str
 
+from tracing.instrumentation import instrument, record_llm_telemetry
+
+@instrument("Summarization")
 def run_step(input_data: SummarizationInput) -> SummarizationOutput:
     """
     Summarization step execution: Synthesizes categories and facts into executive
@@ -69,6 +72,13 @@ def run_step(input_data: SummarizationInput) -> SummarizationOutput:
     result = completion.choices[0].message.parsed
     if not result:
         raise ValueError("Failed to extract structured summary from OpenAI response.")
+    
+    # Record LLM telemetry metrics into active context
+    record_llm_telemetry(
+        prompt=prompt,
+        response=completion.choices[0].message.content or "",
+        tokens=getattr(completion.usage, "total_tokens", 0)
+    )
         
     output = SummarizationOutput(
         document_name=input_data.document_name,

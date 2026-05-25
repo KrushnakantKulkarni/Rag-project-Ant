@@ -4,6 +4,8 @@ from utils.logger import get_logger
 
 logger = get_logger("pipeline.intake")
 
+from tracing.instrumentation import instrument
+
 class IntakeInput(BaseModel):
     """
     Input model for the Intake step.
@@ -19,6 +21,7 @@ class IntakeOutput(BaseModel):
     sanitized_text: str = Field(..., description="The stripped, normalized text ready for downstream analysis")
     char_count: int = Field(..., description="The exact character length of the sanitized text")
 
+@instrument("Intake")
 def run_step(input_data: IntakeInput) -> IntakeOutput:
     """
     Intake step execution: Normalizes whitespace, extracts filename,

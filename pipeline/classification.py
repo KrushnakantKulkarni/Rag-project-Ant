@@ -29,6 +29,9 @@ class ClassificationResponseSchema(BaseModel):
     severity: Literal["Critical", "Major", "Minor"]
     justification: str
 
+from tracing.instrumentation import instrument, record_llm_telemetry
+
+@instrument("Classification")
 def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     """
     Classification step execution: Performs incident classification on categories 
@@ -69,6 +72,13 @@ def run_step(input_data: ClassificationInput) -> ClassificationOutput:
     result = completion.choices[0].message.parsed
     if not result:
         raise ValueError("Failed to extract structured classification from OpenAI response.")
+    
+    # Record LLM telemetry metrics into active context
+    record_llm_telemetry(
+        prompt=prompt,
+        response=completion.choices[0].message.content or "",
+        tokens=getattr(completion.usage, "total_tokens", 0)
+    )
         
     output = ClassificationOutput(
         document_name=input_data.document_name,
